@@ -1,0 +1,66 @@
+services:
+  subscription_db:
+    image: postgres:17
+    container_name: subscription_db
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "${DB_PORT}:5432"
+    volumes:
+      - subscription_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app_network
+
+  subscription_migrate:
+    image: migrate/migrate:v4.18.2
+    container_name: subscription_service_migrate
+    command: ["-path", "/migrations", "-database", "postgres://${DB_USERNAME}:${DB_PASSWORD}@subscription_db:5432/${DB_NAME}?sslmode=disable", "up"]
+    volumes:
+      - ./internal/db/migration:/migrations
+    depends_on:
+      subscription_db:
+        condition: service_healthy
+    networks:
+      - app_network
+
+  subscription_app:
+    build: .
+    container_name: subscription_app
+    environment:
+      CONFIG_NAME: default
+      SERVER_HOST: ${SERVER_HOST}
+      SERVER_PORT: ${SERVER_PORT}
+      DB_HOST: subscription_db
+      DB_PORT: 5432
+      DB_USERNAME: ${DB_USERNAME}
+      DB_NAME: ${DB_NAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_SSL: ${DB_SSL}
+    ports:
+      - "${SERVER_PORT}:8080"
+    depends_on:
+      subscription_migrate: 
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - app_network
+
+volumes:
+  subscription_postgres_data:
+
+networks:
+  app_network:
+    driver: bridge
