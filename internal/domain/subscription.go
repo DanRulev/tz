@@ -34,6 +34,4 @@ type SubscriptionFilter struct {
 type CostRequest struct {
 	UserID      *uuid.UUID
 	ServiceName *string
-	StartDate   *time.Time
-	EndDate     *time.Time
 }

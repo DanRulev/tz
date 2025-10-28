@@ -19,7 +19,7 @@ type SubscriptionRepositoryI interface {
 	CreateSubscription(ctx context.Context, sub domain.Subscription) (domain.Subscription, error)
 	SubscriptionByID(ctx context.Context, id uuid.UUID) (domain.Subscription, error)
 	Subscriptions(ctx context.Context, filter domain.SubscriptionFilter) ([]domain.Subscription, int, error)
-	SubscriptionsCost(ctx context.Context, filter domain.CostRequest) (int, error)
+	SubscriptionsCost(ctx context.Context, filter domain.CostRequest) ([]domain.Subscription, error)
 	UpdateSubscription(ctx context.Context, id uuid.UUID, sub domain.UpdateSubscription) (domain.Subscription, error)
 	DeleteSubscription(ctx context.Context, id uuid.UUID) error
 }
@@ -145,16 +145,16 @@ func (s *SubscriptionService) SubscriptionsCost(ctx context.Context, filter dto.
 	}
 
 	var startDate, endDate *time.Time
-	if filter.StartDate != nil {
-		sd, err := parseDate(*filter.StartDate)
+	if filter.From != nil {
+		sd, err := parseDate(*filter.From)
 		if err != nil {
 			log.Warn("Invalid start_date in update", zap.Error(err))
 			return 0, fmt.Errorf("invalid start_date: %w", err)
 		}
 		startDate = &sd
 	}
-	if filter.EndDate != nil {
-		ed, err := parseDate(*filter.EndDate)
+	if filter.To != nil {
+		ed, err := parseDate(*filter.To)
 		if err != nil {
 			log.Warn("Invalid end_date in update", zap.Error(err))
 			return 0, fmt.Errorf("invalid end_date: %w", err)
@@ -162,9 +162,7 @@ func (s *SubscriptionService) SubscriptionsCost(ctx context.Context, filter dto.
 		endDate = &ed
 	}
 
-	cost, err := s.repo.SubscriptionsCost(ctx, domain.CostRequest{
-		StartDate:   startDate,
-		EndDate:     endDate,
+	subs, err := s.repo.SubscriptionsCost(ctx, domain.CostRequest{
 		ServiceName: filter.ServiceName,
 		UserID:      userID,
 	})
@@ -172,9 +170,37 @@ func (s *SubscriptionService) SubscriptionsCost(ctx context.Context, filter dto.
 		log.Error("Error getting subscriptions cost", zap.Error(err))
 		return 0, fmt.Errorf("error getting subscriptions cost: %w", err)
 	}
-	return cost, nil
-}
 
+	total := 0
+	now := time.Now()
+	for _, sub := range subs {
+		// Определяем реальный период активности подписки
+		actualStart := sub.StartDate
+		actualEnd := now
+		if sub.EndDate != nil {
+			actualEnd = *sub.EndDate
+		}
+
+		calcStart := actualStart
+		if startDate != nil {
+			calcStart = maxTime(actualStart, *startDate)
+		}
+
+		calcEnd := actualEnd
+		if endDate != nil {
+			calcEnd = minTime(actualEnd, *endDate)
+		}
+
+		if calcEnd.Before(calcStart) {
+			continue
+		}
+
+		months := monthsBetween(calcStart, calcEnd)
+		total += sub.Price * months
+	}
+
+	return total, nil
+}
 func (s *SubscriptionService) UpdateSubscription(ctx context.Context, id uuid.UUID, req dto.UpdateSubscriptionRequest) (dto.SubscriptionOutput, error) {
 	log := s.loggerWith(ctx, zap.String("subscription_id", id.String()))
 
@@ -208,6 +234,10 @@ func (s *SubscriptionService) UpdateSubscription(ctx context.Context, id uuid.UU
 		EndDate:     endDate,
 	})
 	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			log.Warn("Subscription not found")
+			return dto.SubscriptionOutput{}, fmt.Errorf("subscription not found: %w", domain.ErrNotFound)
+		}
 		log.Error("Failed to update subscription", zap.Error(err))
 		return dto.SubscriptionOutput{}, fmt.Errorf("failed to update subscription: %w", err)
 	}
@@ -220,6 +250,10 @@ func (s *SubscriptionService) DeleteSubscription(ctx context.Context, id uuid.UU
 	log := s.loggerWith(ctx, zap.String("subscription_id", id.String()))
 
 	if err := s.repo.DeleteSubscription(ctx, id); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			log.Warn("Subscription not found")
+			return fmt.Errorf("subscription not found: %w", domain.ErrNotFound)
+		}
 		log.Error("Failed to delete subscription", zap.Error(err))
 		return fmt.Errorf("failed to delete subscription: %w", err)
 	}
@@ -249,6 +283,31 @@ func subscriptionToDto(s domain.Subscription) dto.SubscriptionOutput {
 		CreatedAt:   s.CreatedAt.Format(time.DateTime),
 		UpdatedAt:   s.UpdatedAt.Format(time.DateTime),
 	}
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
+func monthsBetween(start, end time.Time) int {
+	start = time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, start.Location())
+	end = time.Date(end.Year(), end.Month(), 1, 0, 0, 0, 0, end.Location())
+
+	if end.Before(start) {
+		return 0
+	}
+
+	return (end.Year()-start.Year())*12 + int(end.Month()-start.Month())
 }
 
 func parseDate(dateStr string) (time.Time, error) {

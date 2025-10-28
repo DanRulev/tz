@@ -100,7 +100,7 @@ func (s *SubscriptionRepository) Subscriptions(ctx context.Context, filter domai
 	}
 
 	var total int
-	totalQuery := fmt.Sprintf("SELECT COUNT(*) FROM subscriptions %v", whereClause)
+	totalQuery := "SELECT COUNT(*) FROM subscriptions " + whereClause
 	err := s.db.GetContext(ctx, &total, totalQuery, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to get total count of subscriptions: %w", err)
@@ -136,7 +136,7 @@ func (s *SubscriptionRepository) Subscriptions(ctx context.Context, filter domai
 	return subs, total, err
 }
 
-func (s *SubscriptionRepository) SubscriptionsCost(ctx context.Context, filter domain.CostRequest) (int, error) {
+func (s *SubscriptionRepository) SubscriptionsCost(ctx context.Context, filter domain.CostRequest) ([]domain.Subscription, error) {
 	var (
 		where  []string
 		args   []interface{}
@@ -153,34 +153,25 @@ func (s *SubscriptionRepository) SubscriptionsCost(ctx context.Context, filter d
 		args = append(args, *filter.ServiceName)
 		argIdx++
 	}
-	if filter.StartDate != nil {
-		where = append(where, fmt.Sprintf("start_date >= $%d", argIdx))
-		args = append(args, *filter.StartDate)
-		argIdx++
-	}
-	if filter.EndDate != nil {
-		where = append(where, fmt.Sprintf("end_date <= $%d", argIdx))
-		args = append(args, *filter.EndDate)
-		argIdx++
-	}
 
 	var whereClause string
 	if len(where) > 0 {
 		whereClause = fmt.Sprintf("WHERE %v", strings.Join(where, " AND "))
 	}
 
-	query := `SELECT SUM(price) FROM subscriptions ` + whereClause
-	var total sql.NullInt64
-	err := s.db.GetContext(ctx, &total, query, args...)
+	query := `SELECT id, user_id, service_name, price, start_date, end_date, created_at, updated_at
+		FROM subscriptions ` + whereClause
+
+	var subs []domain.Subscription
+	err := s.db.SelectContext(ctx, &subs, query, args...)
 	if err != nil {
-		return 0, fmt.Errorf("failed to calculate total cost: %w", err)
+		if err == sql.ErrNoRows {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
 	}
 
-	if total.Valid {
-		return int(total.Int64), nil
-	}
-
-	return 0, nil
+	return subs, nil
 }
 
 func (s *SubscriptionRepository) UpdateSubscription(ctx context.Context, id uuid.UUID, sub domain.UpdateSubscription) (domain.Subscription, error) {

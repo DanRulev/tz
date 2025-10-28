@@ -42,8 +42,8 @@ type SubscriptionFilter struct {
 type CostRequest struct {
 	UserID      *string `form:"user_id"`
 	ServiceName *string `form:"service_name"`
-	StartDate   *string `form:"start_date"`
-	EndDate     *string `form:"end_date"`
+	From        *string `form:"from"`
+	To          *string `form:"to"`
 }
 
 // SubscriptionsOutput paginated response.

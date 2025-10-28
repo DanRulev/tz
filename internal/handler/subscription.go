@@ -147,8 +147,8 @@ func (h *SubscriptionHandler) listSubscriptions(c *gin.Context) {
 // @Produce json
 // @Param user_id query string false "User ID (UUID)"
 // @Param service_name query string false "Service name"
-// @Param start_date query string false "Start date in MM-YYYY format"
-// @Param end_date query string false "End date in MM-YYYY format"
+// @Param from query string false "From in MM-YYYY format"
+// @Param to query string false "To in MM-YYYY format"
 // @Success 200 {integer} int
 // @Failure 400 {object} map[string]string
 // @Failure 500 {object} map[string]string
